@@ -13,16 +13,18 @@ class FakeEntityForNav {
 	}
 	updatePos(x,y,z) {
 		const pos = this.coll.pos;
-		pos.x = position.x || 0; 
-		pos.y = position.y || 0;
-		pos.z = pos.baseZPos = position.z || 0;
+		pos.x = x || 0; 
+		pos.y = y || 0;
+		pos.z = pos.baseZPos = z || 0;
 	}
 
 	getCenter(vector) {
-		vector.x = this.coll.x;
-		vector.y = this.coll.y;
+		vector.x = this.coll.pos.x;
+		vector.y = this.coll.pos.y;
 	}
 };
+
+let nightmarsh = null;
 
 // deps: "game.feature.party.entities.party-member-entity"
 let IASTATES = {
@@ -33,6 +35,10 @@ let IASTATES = {
 
 			stateData.realTarget = new FakeEntityForNav();
 			const dir = nightmarsh.getPreferredDirectionForBox(box);
+			if (!dir) {
+				console.error("no dir on GOTOBOX start ?!?");
+				return;
+			}
 			const pos = box.getPosForUser(dir, me);
 			stateData.realTarget.updatePos(pos.x, pos.y,
 						       box.coll.pos.z)
@@ -55,24 +61,32 @@ let IASTATES = {
 
 			// full speed ! onward to them boxen !
 			me.nav.path.startRelativeVel = 1;
-			if (me.nav.path.moveEntity())
+			if (me.nav.path.moveEntity()) {
+				// here we have the direction, otherwise, we
+				// do not even have the garantee that this
+				// direction will be chosen next time, because
+				// of a certain user blocking the way ... (us)
+
+				// REPEAT AFTER ME: DO NOT ADD ACTIONS TO THE
+				// ENTITY
+				// if you do it, all states are dropped.
+				// so you better move carefully to the point
+				// where you go, instead of addAndMoveUser.
+				//
+				// ANYWAY, LET THE PUSH PULLING BEGINS !
+				box.pushPullable.addUser(dir, me);
 				return IASTATES.MOVEBOX;
+			}
 		}
 	},
 	MOVEBOX: {
 		start: (me, box, targetStats, stateData) => {
-			// REPEAT AFTER ME: DO NOT ADD ACTIONS TO THE ENTITY
-			// if you do it, all states are dropped.
-			// so you better move carefully to the point where
-			// you go, instead of addAndMoveUser.
-			box.pushPullable.addUser(me);
-			// LET THE PUSH PULLING BEGINS !
 			me.tryAnotherDirForBox = false;
 		},
 		update: (me, box, targetStat, stateData)=>{
 			if (me.tryAnotherDirForBox) {
 				me.tryAnotherDirForBox = false;
-				const nm = ig.nightmarshPartyPush;
+				const nm = nightmarsh;
 				const dir = nm.getPreferredDirectionForBox(box);
 				if (dir)
 					return IASTATES.GOTOBOX;
@@ -116,8 +130,7 @@ sc.PartyMemberEntity.inject({
 		this.mustChangeToMoveBox = false;
 	},
 	findBestBox: function() {
-		const nightmarsh = ig.nightmarshPartyPush;
-		var box = nightmarsh.getClosestUsefulBox(this.coll.pos);
+		const box = nightmarsh.getClosestUsefulBox(this.coll.pos);
 		if (!box)
 			return;
 		// don't worry, things will work out fine...
@@ -179,7 +192,7 @@ sc.PartyMemberEntity.inject({
 		if (!this.canPushBoxes)
 			return this.parent();
 
-		var target_is_valid = this.hasValidTarget();
+		const target_is_valid = this.hasValidTarget();
 		this.parent();
 		if (!target_is_valid)
 			this.maybeSelectBoxTarget();
@@ -200,10 +213,20 @@ sc.PartyMemberEntity.inject({
 		if (!this.target) {
 			this.maybeSelectBoxTarget();
 			if (this.mustChangeToMoveBox)
-				this.changeState(this.MOVEBOX);
+				this.changeState(IASTATES.MOVEBOX);
 		}
 	},
-
+	// check if we should 'go to combat'.
+	// except an invariant in this game is that you can only have a target
+	// if you are 'in combat'...
+	goToCombat: function() {
+		const parent_result = this.parent();
+		if (!parent_result) {
+			// are there boxes that are in need of some pushing ?
+			if (nightmarsh.hasAnyUsefulBox())
+				return true; // LET'S PUSH SOME BOXEN
+		}
+	},
 	returnToDefaultState: function() {
 		// this means, 'should we go to combat ?'
 		if (this.goToCombat())
@@ -283,8 +306,8 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 			this.boxes.forEach((box,boxid) => {
 				if (box.isPlacedOnADest())
 					return;
-				var dista,ce = l1_distance(dest.coll.pos,
-							   box.coll.pos);
+				const distance = l1_distance(dest.coll.pos,
+							     box.coll.pos);
 				dest_dists.push({boxid, distance});
 			});
 			// sort them closest first.
@@ -297,11 +320,11 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 		// that's probably n*m and does not find the best shit.
 		// but if that's human enough, it should be good for an ai.
 		while (dist_maps.length) {
-			var best_destid = null;
-			var best_boxid = null;
-			var best_distance = Infinity;
+			let best_destid = null;
+			let best_boxid = null;
+			let best_distance = Infinity;
 			dist_maps.forEach(destentry => {
-				var boxes = destentry.boxes;
+				let boxes = destentry.boxes;
 				while (boxes[0].boxid in assigned_boxes)
 					boxes.unshift();
 				if (boxes[0].distance < best_distance) {
@@ -317,8 +340,8 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 		this.box_to_dest_plan = assigned_boxes;
 	},
 	findThemBoxes: function() {
-		var boxentype = ig.ENTITY.MultiplayerPushBlock;
-		var desttype = ig.ENTITY.PushPullDest;
+		const boxentype = ig.ENTITY.MultiplayerPushBlock;
+		const desttype = ig.ENTITY.PushPullDest;
 		this.boxes = ig.game.getEntitiesByType(boxentype);
 		this.dests = ig.game.getEntitiesByType(desttype);
 		this.boxes.forEach((box, i) => { box.organizer_id = i; });
@@ -332,6 +355,16 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 			return; // the alg is not prepared for that
 		this.active = true;
 		this.recalculatePlans();
+	},
+	hasAnyUsefulBox: function() {
+		return this.boxes.some((box, boxid) => {
+			if (!(boxid in this.box_to_dest_plan)
+			    || !box.canBeTargetted())
+				return false;
+			if (!this.getPreferredDirectionForBox(box))
+				return false;
+			return true;
+		});
 	},
 	getClosestUsefulBox: function(position) {
 		let target = null;
@@ -353,13 +386,20 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 		});
 		return target;
 	},
+	getPlannedDest: function(box) {
+		const dest = this.box_to_dest_plan[box.organizer_id];
+		if (dest !== undefined)
+			return this.dests[dest];
+		return null;
+	},
 	getPreferredDirectionForBox: function(box) {
-		var dest = this.box_to_dest_plan[box.organizer_id];
+		const dest = this.getPlannedDest(box);
 		if (!dest)
 			return null;
-		var dist = Vec2.sub(dest.coll.pos, box.coll.pos, {});
+		// vector from box to destination
+		const dist = Vec2.sub(dest.coll.pos, box.coll.pos, {});
 		// find the order in which to try the dirs.
-		var directions_to_try = [];
+		const directions_to_try = [];
 		add_dirs = (principal, reverse, swap) => {
 			if (swap) {
 				const tmp = principal;
@@ -372,9 +412,9 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 
 			directions_to_try.push(principal, reverse);
 		};
-		var try_x = add_dirs.bind(null, "EAST", "WEST", dist.x < 0);
+		const try_x = add_dirs.bind(null, "EAST", "WEST", dist.x < 0);
 		// fuck ads.
-		var try_y = add_dirs.bind(null, "SOUTH", "NORTH", dist.y < 0);
+		const try_y = add_dirs.bind(null, "SOUTH", "NORTH", dist.y < 0);
 		if (dist.x && dist.y) {
 			// i think we should try the smallest distance first
 			// this seems more natural
@@ -397,18 +437,18 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 		return null;
 	},
 	getIAForces: function(box, current_force) {
-		var dest = this.box_to_dest_plan[box.organizer_id];
+		const dest = this.getPlannedDest(box);
 		if (!dest)
 			return {x:0, y:0};
-		var dist = Vec2.sub(dest.coll.pos, box.coll.pos, {});
-		dist.x = dist.x.clamp(-1, 1);
-		dist.y = dist.y.clamp(-1, 1);
+		const dist = Vec2.sub(dest.coll.pos, box.coll.pos, {});
+		dist.x = dist.x.limit(-1, 1);
+		dist.y = dist.y.limit(-1, 1);
 		if (current_force) {
 			// oppose the idiot player
 			if (dist.x == 0 && current_force.x != 0)
-				dist.x = -current_force.clamp(-1, 1);
+				dist.x = -current_force.limit(-1, 1);
 			if (dist.y == 0 && current_force.y != 0)
-				dist.y = -current_force.clamp(-1, 1);
+				dist.y = -current_force.limit(-1, 1);
 		}
 		return dist;
 	},
@@ -417,7 +457,10 @@ const PartyPushableOrganiser = ig.GameAddon.extend({
 			this.recalculatePlans();
 	}
 });
-ig.addGameAddon(() => (ig.nightmarshPartyPush = new PartyPushableOrganiser()));
+ig.addGameAddon(() => {
+	nightmarsh = ig.nightmarshPartyPush = new PartyPushableOrganiser();
+	return nightmarsh;
+});
 
 
 
@@ -437,17 +480,22 @@ const MultiplayerPushable = ig.Class.extend({
 	timer: null,
 	navBlocker: null,
 	awaitingPlacement: false,
+	placed: false,
+	active: false,
+
 	init:function(entity) {
 		this.entity = entity;
 		this.navBlocker = ig.navigation.getNavBlock(entity);
 	},
-	// PushPullBlock: active mean it can be moved.
-	setActive: function(yesorno) {
-		if (!yesorno && this.interactEntry) {
+	canBeUsed: function() {
+		return this.active && this.users.length < 2;
+	},
+	updateInteractivityState: function() {
+		const enable_this = this.canBeUsed();
+		if (!enable_this && this.interactEntry) {
 			sc.mapInteract.removeEntry(this.interactEntry);
 			this.interactEntry = null;
-			this.users.slice().forEach(this.removeUser.bind(this));
-		} else if (yesorno && !this.interactEntry) {
+		} else if (enable_this && !this.interactEntry) {
 			const icons = stolenInteractIcons;
 			const zcond = sc.INTERACT_Z_CONDITION;
 			let inter = new sc.MapInteractEntry(this.entity,
@@ -460,8 +508,16 @@ const MultiplayerPushable = ig.Class.extend({
 			sc.mapInteract.addEntry(inter);
 		}
 	},
+	// PushPullBlock: active mean it can be used.
+	setActive: function(yesorno) {
+		this.active = yesorno;
+		if (!yesorno)
+			while (this.users.length)
+				this.removeUserByIndex(0);
+		this.updateInteractivityState();
+	},
 	isActive: function() {
-		return this.interactEntry !== null;
+		return this.active;
 	},
 
 	// idiot clicked on map interaction, sc.MapInteract
@@ -503,11 +559,10 @@ const MultiplayerPushable = ig.Class.extend({
 		const whatever = {};
 		const trace = ig.game.physics.initTraceResult({});
 
-		const dest_pos = this.basePosFromDirection(dir, player);
-		Vec2.add(dest_pos, this.entity.coll.pos);
-		// now, dest_pos is rough destination pos
+		const dest_pos = this.basePositionFromDirection(dir, player);
+		// now, dest_pos is the rough destination of where to go
 		Vec2.sub(dest_pos, player.getCenter());
-		// now dest_pos is a vector.
+		// now dest_pos is a vector from player to destination.
 		let not_accessible
 			= ig.game.traceEntity(trace, player,
 					      dest_pos.x, dest_pos.y,
@@ -562,15 +617,25 @@ const MultiplayerPushable = ig.Class.extend({
 			this.users.unshift(entry);
 		else
 			this.users.push(entry);
-		if (this.users.length > 2)
-			this.setActive(false);
-		this.updatePositions();
+		this.updateInteractivityState();
+		this.updateRelativePositions();
 
 		if (entity === ig.game.playerEntity)
 			// This blocks control, but where are the controls ?
 			entity.interactObject = this;
 
 		return entry;
+	},
+	removeUserByIndex: function(index) {
+		const entity = this.users.splice(index, 1)[0].entity;
+		this.updateRelativePositions();
+
+		if (entity === ig.game.playerEntity)
+			// regain control to player.
+			entity.interactObject = null;
+		if (entity.hasAction())
+			entity.cancelAction();
+		this.updateInteractivityState();
 	},
 	removeUser: function(entity) {
 		const match = x => x.entity === entity;
@@ -579,16 +644,7 @@ const MultiplayerPushable = ig.Class.extend({
 			console.warn("non-existent entity removed");
 			return;
 		}
-		const removed = this.users.splice(index, 1);
-		if (this.users.length <= 2)
-			this.setActive(true);
-		this.updatePositions();
-
-		if (entity === ig.game.playerEntity)
-			// regain control to player.
-			entity.interactObject = null;
-		if (entity.hasAction())
-			entity.cancelAction();
+		this.removeUserByIndex(index);
 	},
 	directionToRestriction: function(face) {
 		switch (face) {
@@ -631,7 +687,8 @@ const MultiplayerPushable = ig.Class.extend({
 		return null;
 	},
 	// get relative position of a would-be lone user. 
-	basePosFromDirection: function(direction, entity) {
+	// add this to entity.coll.pos to get the center position of the user
+	baseRelativePosFromDirection: function(direction, entity) {
 		const usersize = entity.coll.size;
 		const pushablesize = this.entity.coll.size;
 
@@ -649,8 +706,14 @@ const MultiplayerPushable = ig.Class.extend({
 			  pushablesize.y / 2);
 		return ret;
 	},
+	// like baseRelativePosFromDirection except it's not relative
+	basePositionFromDirection: function(direction, entity) {
+		return Vec2.add(this.baseRelativePosFromDirection(direction,
+								  entity),
+				this.entity.coll.pos);
+	},
 	// assumes two users limit.
-	updatePositions : function() {
+	updateRelativePositions : function() {
 		let sideshift = {x:0, y:0};
 		if (this.users.length === 2
 		    && this.users[0].dir === this.users[1].dir) {
@@ -664,10 +727,9 @@ const MultiplayerPushable = ig.Class.extend({
 		}
 
 		this.users.forEach((user, index) => {
-			const factor = index ? 1 : -1;
-			const rel
-				= this.basePosFromDirection(user.dir,
-							    user.entity);
+			const entity = user.entity;
+			const rel = this.baseRelativePosFromDirection(user.dir,
+								      entity);
 			if (index)
 				Vec2.add(rel, sideshift);
 			else
@@ -684,7 +746,7 @@ const MultiplayerPushable = ig.Class.extend({
 			if (user.entity == ig.game.playerEntity) {
 				sc.control.moveDir(user.force, 1);
 			} else {
-				const nightmarsh = ig.nightmarshPartyPush;
+				const box = this.entity;
 				user.force = nightmarsh.getIAForces(box, force);
 			}
 
@@ -740,7 +802,7 @@ const MultiplayerPushable = ig.Class.extend({
 	// in this dir, it just check for obvious obstacles.
 	// this should only be used by the IA
 	canMoveBoxInDirection: function(direction) {
-		const offset = dirToOffset(direction, MOVE_INCREMENT);
+		const offset = this.dirToOffset(direction, MOVE_INCREMENT);
 		return this.canMoveBox(offset);
 	},
 	// Return true if there is a chance that this face can be used by an AI
@@ -754,7 +816,7 @@ const MultiplayerPushable = ig.Class.extend({
 		
 		// assume a player is 20 pixel wide, even if in practice, this
 		// is is less than that.
-		var offset = this.dirToOffset(direction, -20);
+		const offset = this.dirToOffset(direction, -20);
 
 		// we don't need to hack up the ignoreCollision of users this
 		// time.
@@ -806,6 +868,8 @@ const MultiplayerPushable = ig.Class.extend({
 			if (this.awaitingPlacement) {
 				this.awaitingPlacement = false;
 				ground.onPushPullablePlaced(this.entity);
+				this.placed = true;
+				ig.nightmarshPartyPush.notifyBoxPlaced(this);
 				return false;
 			} else if (ground.onPushPullableDetect
 				   && ground.onPushPullableDetect(this.entity,
@@ -813,7 +877,6 @@ const MultiplayerPushable = ig.Class.extend({
 				this.finalPos = new_pos;
 				this.setActive(false);
 				this.awaitingPlacement = true;
-				ig.nightmarshPartyPush.notifyBoxPlaced(this);
 				return false;
 			}
 		}
@@ -944,10 +1007,10 @@ ig.ENTITY.MultiplayerPushBlock = ig.ENTITY.PushPullBlock.extend({
 		this.annotate = false;
 	},
 	isPlacedOnADest: function() {
-		return this.pushPullable.awaitingPlacement;
+		return this.pushPullable.placed;
 	},
 	canBeTargetted: function() {
-		return this.pushPullable.isActive();
+		return this.pushPullable.canBeUsed();
 	},
 	faceAvailable: function(direction) {
 		return this.pushPullable.faceAvailable(direction);
@@ -956,8 +1019,8 @@ ig.ENTITY.MultiplayerPushBlock = ig.ENTITY.PushPullBlock.extend({
 		return this.pushPullable.canMoveBoxInDirection(direction);
 	},
 	getPosForUser: function(direction, entity) {
-		return this.pushPullable.basePosFromDirection(direction,
-							      entity);
+		return this.pushPullable.basePositionFromDirection(direction,
+								   entity);
 	}
 });
 

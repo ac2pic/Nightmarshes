@@ -2,5 +2,8 @@
 	"name": "Night Marsh",
 	"description": "Will you face the darkness of your mind ? or at least some Halloween shit ?",
 	"postload": "stuff.js",
-	"version": "0.0.1"
+	"version": "0.0.1",
+	"assets": [
+		"assets/data/maps/nightmarsh/testboxen.json"
+	]
 }
