@@ -1,0 +1,11 @@
+{
+    "id": "night-marsh",
+    "version": "0.0.1",
+    "title": {
+        "en_US": "Night Marsh"
+    },
+    "description": {
+        "en_US": "Will you face the darkness of your mind ? or at least some Halloween shit ?"
+    },
+    "postload": "stuff.js"
+}
